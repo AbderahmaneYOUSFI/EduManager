@@ -1,0 +1,9 @@
+'use client';
+import { signIn } from 'next-auth/react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Button } from '@/components/ui/button';
+export default function Login() {
+  const [error, setError] = useState(''); const [pending, setPending] = useState(false); const router = useRouter();
+  return <main className="login"><section className="login-story"><div className="brand-mark">E</div><p className="eyebrow">EDUMANAGER</p><h1>Plus de temps<br />pour faire grandir<br /><em>les talents.</em></h1><p>Élèves, cours et finances réunis dans un espace clair, pensé pour votre école.</p><div className="login-footer">Votre école. Votre équipe. Un même élan.</div></section><section className="login-form"><p className="eyebrow">VOTRE ESPACE DE TRAVAIL</p><h2>Bienvenue à l’école.</h2><p className="muted">Connectez-vous pour retrouver votre activité.</p><form onSubmit={async e => { e.preventDefault(); setPending(true); setError(''); const form = new FormData(e.currentTarget); try { const result = await signIn('credentials', { email: form.get('email'), password: form.get('password'), redirect: false }); if (result?.ok) { router.push('/dashboard'); router.refresh(); } else setError('Identifiants incorrects ou connexion temporairement limitée.'); } catch { setError('Service indisponible. Réessayez.'); } finally { setPending(false); } }}><label>Adresse e-mail<input name="email" type="email" required autoComplete="username" /></label><label>Mot de passe<input name="password" type="password" required maxLength={128} autoComplete="current-password" /></label><Button disabled={pending}>{pending ? 'Connexion…' : 'Se connecter →'}</Button>{error && <p role="alert" className="message-error">{error}</p>}</form><p className="login-note">Accès réservé à l’équipe de l’établissement.</p></section></main>;
+}

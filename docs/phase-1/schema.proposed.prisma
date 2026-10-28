@@ -1,0 +1,637 @@
+// Proposition de conception uniquement. Prisma ORM 7.
+// URL via prisma.config.ts en phase 2. Contraintes SQL complémentaires : regles-metier.md.
+generator client {
+  provider = "prisma-client"
+  output   = "../../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RoleCode {
+  ADMIN
+  SECRETAIRE
+  PROFESSEUR
+}
+
+enum Lifecycle {
+  ACTIVE
+  SUSPENDED
+  ENDED
+  CANCELLED
+}
+
+enum SessionStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+enum PaymentStatus {
+  DRAFT
+  VALIDATED
+  CANCELLED
+}
+
+enum PdfStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+enum CompensationMode {
+  HOURLY
+  PER_SESSION
+}
+
+model User {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String?
+  email          String   @unique
+  emailVerified  DateTime? @db.Timestamptz(3)
+  image          String?
+  disabledAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  roles          UserRole[]
+  accounts       Account[]
+  authSessions   AuthSession[]
+  teacher        Teacher?
+  collected      Payment[] @relation("CollectedBy")
+  cancelled      Payment[] @relation("CancelledBy")
+  attendances    Attendance[]
+  audits         AuditLog[]
+  capacityOverrides Enrollment[] @relation("CapacityOverride")
+}
+
+model Role {
+  id          String @id @default(uuid()) @db.Uuid
+  code        RoleCode @unique
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id    String @id @default(uuid()) @db.Uuid
+  code  String @unique
+  roles RolePermission[]
+}
+
+model UserRole {
+  userId String @db.Uuid
+  roleId String @db.Uuid
+  user   User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  role   Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+  role         Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+// Tables techniques Auth.js ; mapping AuthSession à prévoir dans l'adaptateur.
+model Account {
+  id                String @id @default(uuid()) @db.Uuid
+  userId            String @db.Uuid
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model AuthSession {
+  id           String @id @default(uuid()) @db.Uuid
+  sessionToken String @unique
+  userId       String @db.Uuid
+  expires      DateTime @db.Timestamptz(3)
+  user         User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([expires])
+}
+
+model VerificationToken {
+  identifier String
+  token      String @unique
+  expires    DateTime @db.Timestamptz(3)
+  @@unique([identifier, token])
+}
+
+model Student {
+  id                 String @id @default(uuid()) @db.Uuid
+  registrationNumber String @unique
+  firstName          String
+  lastName           String
+  birthDate          DateTime? @db.Date
+  phone              String?
+  address            String?
+  archivedAt         DateTime? @db.Timestamptz(3)
+  createdAt          DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime @updatedAt @db.Timestamptz(3)
+  guardians          StudentGuardian[]
+  academicYears      StudentAcademicYear[]
+  enrollments        Enrollment[]
+  attendances        Attendance[]
+  payments           Payment[]
+  @@index([lastName, firstName])
+}
+
+model Guardian {
+  id         String @id @default(uuid()) @db.Uuid
+  fullName   String
+  phone      String
+  email      String?
+  address    String?
+  archivedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
+  students   StudentGuardian[]
+}
+
+model StudentGuardian {
+  studentId  String @db.Uuid
+  guardianId String @db.Uuid
+  relationship String
+  isPrimary  Boolean @default(false)
+  student    Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  guardian   Guardian @relation(fields: [guardianId], references: [id], onDelete: Restrict)
+  @@id([studentId, guardianId])
+  @@index([guardianId])
+}
+
+model Teacher {
+  id            String @id @default(uuid()) @db.Uuid
+  userId        String? @unique @db.Uuid
+  firstName     String
+  lastName      String
+  phone         String?
+  email         String?
+  archivedAt    DateTime? @db.Timestamptz(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @db.Timestamptz(3)
+  user          User? @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subjects      TeacherSubject[]
+  groups        Group[]
+  rules         ScheduleRule[]
+  sessions      Session[]
+  availability  TeacherAvailability[]
+  exceptions    TeacherAvailabilityException[]
+  rates         TeacherRate[]
+  compensations TeacherCompensation[]
+}
+
+model Subject {
+  id         String @id @default(uuid()) @db.Uuid
+  code       String @unique
+  name       String
+  archivedAt DateTime? @db.Timestamptz(3)
+  teachers   TeacherSubject[]
+  groups     Group[]
+}
+
+model TeacherSubject {
+  teacherId String @db.Uuid
+  subjectId String @db.Uuid
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  @@id([teacherId, subjectId])
+  @@index([subjectId])
+}
+
+model SchoolLevel {
+  id         String @id @default(uuid()) @db.Uuid
+  code       String @unique
+  name       String
+  sortOrder  Int
+  archivedAt DateTime? @db.Timestamptz(3)
+  groups     Group[]
+  students   StudentAcademicYear[]
+}
+
+model AcademicYear {
+  id          String @id @default(uuid()) @db.Uuid
+  name        String @unique
+  startsOn    DateTime @db.Date
+  endsOn      DateTime @db.Date
+  archivedAt  DateTime? @db.Timestamptz(3)
+  groups      Group[]
+  students    StudentAcademicYear[]
+  closures    SchoolClosure[]
+}
+
+model StudentAcademicYear {
+  id             String @id @default(uuid()) @db.Uuid
+  studentId      String @db.Uuid
+  academicYearId String @db.Uuid
+  schoolLevelId  String @db.Uuid
+  student        Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  schoolLevel    SchoolLevel @relation(fields: [schoolLevelId], references: [id], onDelete: Restrict)
+  enrollments    Enrollment[]
+  @@unique([studentId, academicYearId])
+  @@index([academicYearId, schoolLevelId])
+  @@index([schoolLevelId])
+}
+
+model SchoolClosure {
+  id             String @id @default(uuid()) @db.Uuid
+  academicYearId String @db.Uuid
+  startsOn       DateTime @db.Date
+  endsOn         DateTime @db.Date
+  reason         String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  @@index([academicYearId, startsOn])
+}
+
+model Room {
+  id         String @id @default(uuid()) @db.Uuid
+  code       String @unique
+  name       String
+  capacity   Int
+  archivedAt DateTime? @db.Timestamptz(3)
+  rules      ScheduleRule[]
+  sessions   Session[]
+}
+
+model Group {
+  id             String @id @default(uuid()) @db.Uuid
+  code           String @unique
+  name           String
+  subjectId      String @db.Uuid
+  schoolLevelId  String @db.Uuid
+  academicYearId String @db.Uuid
+  teacherId      String @db.Uuid
+  capacity       Int
+  status         Lifecycle @default(ACTIVE)
+  archivedAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  subject        Subject @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  schoolLevel    SchoolLevel @relation(fields: [schoolLevelId], references: [id], onDelete: Restrict)
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Restrict)
+  teacher        Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  pricingPlans   PricingPlan[]
+  enrollments    Enrollment[]
+  rules          ScheduleRule[]
+  sessions       Session[]
+  @@index([academicYearId, status])
+  @@index([teacherId])
+  @@index([subjectId, schoolLevelId])
+  @@index([schoolLevelId])
+}
+
+model PricingPlan {
+  id            String @id @default(uuid()) @db.Uuid
+  groupId       String @db.Uuid
+  effectiveFrom DateTime @db.Date
+  effectiveTo   DateTime? @db.Date
+  monthlyAmount Decimal @db.Decimal(14, 2)
+  currency      String @default("DZD") @db.Char(3)
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  group         Group @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  subscriptions Subscription[]
+  @@unique([groupId, effectiveFrom])
+}
+
+model Enrollment {
+  id                    String @id @default(uuid()) @db.Uuid
+  studentId             String @db.Uuid
+  studentAcademicYearId String @db.Uuid
+  groupId               String @db.Uuid
+  startsOn              DateTime @db.Date
+  endsOn                DateTime? @db.Date
+  status                Lifecycle @default(ACTIVE)
+  previousEnrollmentId  String? @db.Uuid
+  capacityOverrideById  String? @db.Uuid
+  capacityOverrideReason String?
+  createdAt             DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt             DateTime @updatedAt @db.Timestamptz(3)
+  student               Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  studentAcademicYear   StudentAcademicYear @relation(fields: [studentAcademicYearId], references: [id], onDelete: Restrict)
+  group                 Group @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  capacityOverrideBy    User? @relation("CapacityOverride", fields: [capacityOverrideById], references: [id], onDelete: Restrict)
+  previous              Enrollment? @relation("Transfer", fields: [previousEnrollmentId], references: [id], onDelete: Restrict)
+  next                  Enrollment[] @relation("Transfer")
+  subscriptions         Subscription[]
+  attendances           Attendance[]
+  @@unique([studentId, groupId, startsOn])
+  @@index([groupId, startsOn, endsOn])
+  @@index([studentAcademicYearId])
+  @@index([previousEnrollmentId])
+  @@index([capacityOverrideById])
+}
+
+model BillingPolicy {
+  id            String @id @default(uuid()) @db.Uuid
+  version       Int @unique
+  effectiveFrom DateTime @db.Date
+  approvedAt    DateTime? @db.Timestamptz(3)
+  approvedBy    String? // référence d'approbation ; pas de valeur présumée
+  rules         Json // D1–D8 ; schéma Zod exhaustif requis avant activation
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  subscriptions Subscription[]
+  charges       MonthlyCharge[]
+}
+
+model Subscription {
+  id             String @id @default(uuid()) @db.Uuid
+  enrollmentId   String @db.Uuid
+  pricingPlanId  String @db.Uuid
+  billingPolicyId String @db.Uuid
+  startsOn       DateTime @db.Date
+  endsOn         DateTime? @db.Date
+  agreedAmount   Decimal @db.Decimal(14, 2)
+  currency       String @default("DZD") @db.Char(3)
+  dueDay         Int? // uniquement si politique à jour fixe ; aucun défaut inventé
+  discountTerms  Json? // termes approuvés, versionnés avec le contrat
+  status         Lifecycle @default(ACTIVE)
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime @updatedAt @db.Timestamptz(3)
+  enrollment     Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Restrict)
+  pricingPlan    PricingPlan @relation(fields: [pricingPlanId], references: [id], onDelete: Restrict)
+  billingPolicy  BillingPolicy @relation(fields: [billingPolicyId], references: [id], onDelete: Restrict)
+  suspensions    SubscriptionSuspension[]
+  charges        MonthlyCharge[]
+  @@unique([enrollmentId, startsOn])
+  @@index([status, startsOn, endsOn])
+  @@index([pricingPlanId])
+  @@index([billingPolicyId])
+}
+
+model SubscriptionSuspension {
+  id             String @id @default(uuid()) @db.Uuid
+  subscriptionId String @db.Uuid
+  startsOn       DateTime @db.Date
+  endsOn         DateTime? @db.Date
+  reason         String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  subscription   Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  @@index([subscriptionId, startsOn])
+}
+
+model MonthlyCharge {
+  id              String @id @default(uuid()) @db.Uuid
+  subscriptionId  String @db.Uuid
+  billingPolicyId String @db.Uuid
+  periodStart     DateTime @db.Date
+  periodEnd       DateTime @db.Date
+  referenceYear   Int
+  referenceMonth  Int
+  initialAmount   Decimal @db.Decimal(14, 2)
+  discountAmount  Decimal @db.Decimal(14, 2)
+  netAmount       Decimal @db.Decimal(14, 2)
+  currency        String @default("DZD") @db.Char(3)
+  dueOn           DateTime @db.Date
+  snapshot        Json
+  issuedAt        DateTime @default(now()) @db.Timestamptz(3)
+  subscription    Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Restrict)
+  billingPolicy   BillingPolicy @relation(fields: [billingPolicyId], references: [id], onDelete: Restrict)
+  allocations     PaymentAllocation[]
+  // Encaissement, solde et statut calculés : aucune colonne mutable faisant autorité.
+  @@unique([subscriptionId, periodStart])
+  @@index([referenceYear, referenceMonth])
+  @@index([dueOn])
+  @@index([billingPolicyId])
+}
+
+model Payment {
+  id             String @id @default(uuid()) @db.Uuid
+  studentId      String @db.Uuid
+  amount         Decimal @db.Decimal(14, 2)
+  currency       String @default("DZD") @db.Char(3)
+  method         String // liste autorisée configurée et validée côté serveur
+  reference      String?
+  paidAt         DateTime @db.Timestamptz(3)
+  status         PaymentStatus @default(DRAFT)
+  validatedAt    DateTime? @db.Timestamptz(3)
+  collectedById  String @db.Uuid
+  cancelledAt    DateTime? @db.Timestamptz(3)
+  cancelledById  String? @db.Uuid
+  cancelReason   String?
+  idempotencyKey String @unique
+  requestHash    String
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+  student        Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  collectedBy    User @relation("CollectedBy", fields: [collectedById], references: [id], onDelete: Restrict)
+  cancelledBy    User? @relation("CancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  allocations    PaymentAllocation[]
+  receipt        Receipt?
+  @@index([studentId, paidAt])
+  @@index([status, paidAt])
+  @@index([collectedById])
+  @@index([cancelledById])
+}
+
+model PaymentAllocation {
+  id        String @id @default(uuid()) @db.Uuid
+  paymentId String @db.Uuid
+  chargeId  String @db.Uuid
+  amount    Decimal @db.Decimal(14, 2)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  charge    MonthlyCharge @relation(fields: [chargeId], references: [id], onDelete: Restrict)
+  @@unique([paymentId, chargeId])
+  @@index([chargeId])
+}
+
+model Receipt {
+  id          String @id @default(uuid()) @db.Uuid
+  paymentId   String @unique @db.Uuid
+  number      String @unique
+  snapshot    Json
+  pdfStatus   PdfStatus @default(PENDING)
+  a4Key       String?
+  compactKey  String?
+  a4Hash      String?
+  compactHash String?
+  issuedAt    DateTime @default(now()) @db.Timestamptz(3)
+  payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+}
+
+model TeacherAvailability {
+  id          String @id @default(uuid()) @db.Uuid
+  teacherId   String @db.Uuid
+  weekday     Int // ISO 1–7
+  startMinute Int
+  endMinute   Int
+  validFrom   DateTime @db.Date
+  validTo     DateTime? @db.Date
+  teacher     Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  @@index([teacherId, validFrom])
+}
+
+model TeacherAvailabilityException {
+  id        String @id @default(uuid()) @db.Uuid
+  teacherId String @db.Uuid
+  startsAt  DateTime @db.Timestamptz(3)
+  endsAt    DateTime @db.Timestamptz(3)
+  available Boolean
+  reason    String?
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  @@index([teacherId, startsAt, endsAt])
+}
+
+model ScheduleRule {
+  id          String @id @default(uuid()) @db.Uuid
+  groupId     String @db.Uuid
+  teacherId   String @db.Uuid
+  roomId      String @db.Uuid
+  weekday     Int
+  startMinute Int
+  endMinute   Int
+  timezone    String @default("Africa/Algiers")
+  validFrom   DateTime @db.Date
+  validTo     DateTime @db.Date
+  retiredAt   DateTime? @db.Timestamptz(3)
+  createdAt   DateTime @default(now()) @db.Timestamptz(3)
+  group       Group @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  teacher     Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  room        Room @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  sessions    Session[]
+  @@index([groupId, validFrom])
+  @@index([teacherId])
+  @@index([roomId])
+}
+
+// Séance scolaire, à distinguer d'AuthSession.
+model Session {
+  id                  String @id @default(uuid()) @db.Uuid
+  groupId             String @db.Uuid
+  teacherId           String @db.Uuid
+  roomId              String @db.Uuid
+  scheduleRuleId      String? @db.Uuid
+  originalStartsAt    DateTime @db.Timestamptz(3)
+  startsAt            DateTime @db.Timestamptz(3)
+  endsAt              DateTime @db.Timestamptz(3)
+  status              SessionStatus @default(SCHEDULED)
+  cancellationReason  String?
+  createdAt           DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt           DateTime @updatedAt @db.Timestamptz(3)
+  group               Group @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  teacher             Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  room                Room @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  scheduleRule        ScheduleRule? @relation(fields: [scheduleRuleId], references: [id], onDelete: Restrict)
+  attendances         Attendance[]
+  compensations       TeacherCompensation[]
+  @@unique([scheduleRuleId, originalStartsAt])
+  @@index([groupId, startsAt])
+  @@index([teacherId, startsAt])
+  @@index([roomId, startsAt])
+}
+
+model Attendance {
+  id           String @id @default(uuid()) @db.Uuid
+  sessionId    String @db.Uuid
+  studentId    String @db.Uuid
+  enrollmentId String @db.Uuid
+  status       AttendanceStatus
+  comment      String?
+  recordedById String @db.Uuid
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+  session      Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  student      Student @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  enrollment   Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Restrict)
+  recordedBy   User @relation(fields: [recordedById], references: [id], onDelete: Restrict)
+  @@unique([sessionId, studentId])
+  @@index([studentId])
+  @@index([enrollmentId])
+  @@index([recordedById])
+}
+
+model TeacherRate {
+  id            String @id @default(uuid()) @db.Uuid
+  teacherId     String @db.Uuid
+  mode          CompensationMode
+  amount        Decimal @db.Decimal(14, 2)
+  effectiveFrom DateTime @db.Date
+  effectiveTo   DateTime? @db.Date
+  teacher       Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  compensations TeacherCompensation[]
+  @@unique([teacherId, effectiveFrom])
+}
+
+model TeacherCompensation {
+  id            String @id @default(uuid()) @db.Uuid
+  teacherId     String @db.Uuid
+  sessionId     String @db.Uuid
+  teacherRateId String @db.Uuid
+  mode          CompensationMode
+  rateAmount    Decimal @db.Decimal(14, 2)
+  durationMinutes Int
+  amount        Decimal @db.Decimal(14, 2)
+  currency      String @default("DZD") @db.Char(3)
+  approvedAt    DateTime? @db.Timestamptz(3)
+  snapshot      Json
+  createdAt     DateTime @default(now()) @db.Timestamptz(3)
+  teacher       Teacher @relation(fields: [teacherId], references: [id], onDelete: Restrict)
+  session       Session @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  teacherRate   TeacherRate @relation(fields: [teacherRateId], references: [id], onDelete: Restrict)
+  @@unique([teacherId, sessionId])
+  @@index([sessionId])
+  @@index([teacherRateId])
+}
+
+model AuditLog {
+  id        String @id @default(uuid()) @db.Uuid
+  actorId   String? @db.Uuid
+  action    String
+  entity    String
+  entityId  String
+  requestId String
+  changes   Json // données minimales, aucune copie aveugle des secrets/PII
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  actor     User? @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  @@index([entity, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([requestId])
+}
+
+model Settings {
+  id           Int @id @default(1) // CHECK id = 1 en migration
+  schoolName   String
+  address      String
+  phone        String
+  timezone     String @default("Africa/Algiers")
+  locale       String @default("fr-DZ")
+  currency     String @default("DZD") @db.Char(3)
+  configuration Json
+  updatedAt    DateTime @updatedAt @db.Timestamptz(3)
+}
+
+model OutboxEvent {
+  id           String @id @default(uuid()) @db.Uuid
+  deduplicationKey String @unique
+  type         String
+  aggregateId  String
+  payload      Json
+  attempts     Int @default(0)
+  availableAt  DateTime @default(now()) @db.Timestamptz(3)
+  lockedUntil  DateTime? @db.Timestamptz(3)
+  processedAt  DateTime? @db.Timestamptz(3)
+  lastError    String?
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+  @@index([processedAt, availableAt])
+}

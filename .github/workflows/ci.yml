@@ -1,0 +1,38 @@
+name: EduManager checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-bookworm
+        env:
+          POSTGRES_DB: edumanager_ci
+          POSTGRES_USER: edumanager
+          POSTGRES_PASSWORD: disposable-ci-database-password
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U edumanager -d edumanager_ci" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://edumanager:disposable-ci-database-password@localhost:5432/edumanager_ci
+      NEXTAUTH_SECRET: disposable-ci-secret-for-isolated-test-infrastructure-only
+      NEXTAUTH_URL: http://localhost:3100
+      ADMIN_EMAIL: admin@example.test
+      ADMIN_PASSWORD: disposable-ci-admin-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:integration
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - run: npm run build
+      - run: npm audit --audit-level=high
